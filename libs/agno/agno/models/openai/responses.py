@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model
+from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
@@ -64,10 +64,6 @@ class OpenAIResponses(Model):
     # OpenAI clients
     client: Optional[OpenAI] = None
     async_client: Optional[AsyncOpenAI] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
 
     # The role to map the message role to.
     role_map = {
@@ -198,7 +194,6 @@ class OpenAIResponses(Model):
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
-
         if tools:
             request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
 
@@ -735,12 +730,20 @@ class OpenAIResponses(Model):
             else:
                 stream_data.response_citations.raw.append(stream_event.annotation)  # type: ignore
 
-            if stream_event.annotation.type == "url_citation":
-                if stream_data.response_citations.urls is None:
-                    stream_data.response_citations.urls = []
-                stream_data.response_citations.urls.append(
-                    UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
-                )
+            if isinstance(stream_event.annotation, dict):
+                if stream_event.annotation.get("type") == "url_citation":
+                    if stream_data.response_citations.urls is None:
+                        stream_data.response_citations.urls = []
+                    stream_data.response_citations.urls.append(
+                        UrlCitation(url=stream_event.annotation.get("url"), title=stream_event.annotation.get("title"))
+                    )
+            else:
+                if stream_event.annotation.type == "url_citation":
+                    if stream_data.response_citations.urls is None:
+                        stream_data.response_citations.urls = []
+                    stream_data.response_citations.urls.append(
+                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
+                    )
 
             model_response.citations = stream_data.response_citations
 
@@ -787,7 +790,7 @@ class OpenAIResponses(Model):
             if stream_event.response.usage is not None:
                 model_response.response_usage = stream_event.response.usage
 
-            self._add_usage_metrics_to_assistant_message(
+            _add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message,
                 response_usage=model_response.response_usage,
             )
@@ -806,7 +809,9 @@ class OpenAIResponses(Model):
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        for stream_event in self.invoke_stream(messages=messages):
+        for stream_event in self.invoke_stream(
+            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,
@@ -829,7 +834,9 @@ class OpenAIResponses(Model):
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        async for stream_event in self.ainvoke_stream(messages=messages):
+        async for stream_event in self.ainvoke_stream(
+            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,
