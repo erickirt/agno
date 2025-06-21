@@ -216,7 +216,7 @@ class LanceDb(VectorDb):
             log_info("No documents to insert")
             return
 
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         data = []
 
         for document in documents:
@@ -274,7 +274,7 @@ class LanceDb(VectorDb):
             log_debug("No documents to insert")
             return
 
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         data = []
 
         # Prepare documents for insertion
@@ -331,7 +331,7 @@ class LanceDb(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        self.insert(documents)
+        self.insert(documents, filters=filters)
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         await self.async_insert(documents, filters)
@@ -390,6 +390,7 @@ class LanceDb(VectorDb):
         if self.reranker and search_results:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
+        log_info(f"Found {len(search_results)} documents")
         return search_results
 
     async def async_search(
@@ -449,6 +450,7 @@ class LanceDb(VectorDb):
         if self.reranker and search_results:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
+        log_info(f"Found {len(search_results)} documents")
         return search_results
 
     def vector_search(self, query: str, limit: int = 5) -> List[Document]:

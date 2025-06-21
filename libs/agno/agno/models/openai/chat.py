@@ -25,7 +25,6 @@ try:
         ChoiceDelta,
         ChoiceDeltaToolCall,
     )
-    from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -66,6 +65,7 @@ class OpenAIChat(Model):
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
+    role_map: Optional[Dict[str, str]] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -78,16 +78,8 @@ class OpenAIChat(Model):
     http_client: Optional[httpx.Client] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    # OpenAI clients
-    client: Optional[OpenAIClient] = None
-    async_client: Optional[AsyncOpenAIClient] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
     # The role to map the message role to.
-    role_map = {
+    default_role_map = {
         "system": "developer",
         "user": "user",
         "assistant": "assistant",
@@ -128,16 +120,10 @@ class OpenAIChat(Model):
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
-        # There is a bug in OpenAI preventing the reuse of the same client for multiple requests in some cases.
-        # So we need to create a new client for each request.
-        if self.client:
-            return self.client
-
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
             client_params["http_client"] = self.http_client
-        self.client = OpenAIClient(**client_params)
-        return self.client
+        return OpenAIClient(**client_params)
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
@@ -146,9 +132,6 @@ class OpenAIChat(Model):
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client and not self.async_client.is_closed():
-            return self.async_client
-
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             client_params["http_client"] = self.http_client
@@ -184,7 +167,6 @@ class OpenAIChat(Model):
             "modalities": self.modalities,
             "audio": self.audio,
             "presence_penalty": self.presence_penalty,
-            "response_format": response_format,
             "seed": self.seed,
             "stop": self.stop,
             "temperature": self.temperature,
@@ -194,6 +176,25 @@ class OpenAIChat(Model):
             "extra_query": self.extra_query,
             "metadata": self.metadata,
         }
+
+        # Handle response format - always use JSON schema approach
+        if response_format is not None:
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                # Convert Pydantic to JSON schema for regular endpoint
+                from agno.utils.models.schema_utils import get_response_schema_for_provider
+
+                schema = get_response_schema_for_provider(response_format, "openai")
+                base_params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": schema,
+                        "strict": True,
+                    },
+                }
+            else:
+                # Handle other response format types (like {"type": "json_object"})
+                base_params["response_format"] = response_format
 
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
@@ -253,7 +254,7 @@ class OpenAIChat(Model):
             Dict[str, Any]: The formatted message.
         """
         message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
+            "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],
             "content": message.content,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
@@ -277,7 +278,7 @@ class OpenAIChat(Model):
                     message_dict["content"].extend(audio_to_message(audio=message.audio))
 
         if message.audio_output is not None:
-            message_dict["content"] = None
+            message_dict["content"] = ""
             message_dict["audio"] = {"id": message.audio_output.id}
 
         if message.videos is not None and len(message.videos) > 0:
@@ -303,7 +304,7 @@ class OpenAIChat(Model):
 
         # Manually add the content field even if it is None
         if message.content is None:
-            message_dict["content"] = None
+            message_dict["content"] = ""
         return message_dict
 
     def invoke(
@@ -312,7 +313,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletion, ParsedChatCompletion]:
+    ) -> ChatCompletion:
         """
         Send a chat completion request to the OpenAI API.
 
@@ -324,15 +325,6 @@ class OpenAIChat(Model):
         """
 
         try:
-            if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                    return self.get_client().beta.chat.completions.parse(
-                        model=self.id,
-                        messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.get_request_kwargs(
-                            response_format=response_format, tools=tools, tool_choice=tool_choice
-                        ),
-                    )
-
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -382,7 +374,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletion, ParsedChatCompletion]:
+    ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
@@ -393,17 +385,6 @@ class OpenAIChat(Model):
             ChatCompletion: The chat completion response from the API.
         """
         try:
-            if response_format is not None:
-                if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                    return await self.get_async_client().beta.chat.completions.parse(
-                        model=self.id,
-                        messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.get_request_kwargs(
-                            response_format=response_format, tools=tools, tool_choice=tool_choice
-                        ),
-                    )
-                else:
-                    raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -618,7 +599,7 @@ class OpenAIChat(Model):
 
     def parse_provider_response(
         self,
-        response: Union[ChatCompletion, ParsedChatCompletion],
+        response: ChatCompletion,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> ModelResponse:
         """
@@ -635,19 +616,6 @@ class OpenAIChat(Model):
 
         # Get response message
         response_message = response.choices[0].message
-
-        # Parse structured outputs if enabled
-        try:
-            if (
-                response_format is not None
-                and isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                parsed_object = response_message.parsed  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
