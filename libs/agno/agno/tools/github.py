@@ -1,12 +1,14 @@
 import json
 from os import getenv
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
+    from github.GithubObject import NotSet
+
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
 
@@ -17,6 +19,7 @@ class GithubTools(Toolkit):
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
         search_repositories: bool = True,
+        list_repositories: bool = False,
         get_repository: bool = False,
         get_pull_request: bool = False,
         get_pull_request_changes: bool = False,
@@ -56,91 +59,92 @@ class GithubTools(Toolkit):
         create_review_request: bool = False,
         **kwargs,
     ):
-        super().__init__(name="github", **kwargs)
-
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
 
         self.g = self.authenticate()
 
+        tools: List[Any] = []
         if search_repositories:
-            self.register(self.search_repositories)
+            tools.append(self.search_repositories)
+        if list_repositories:
+            tools.append(self.list_repositories)
         if get_repository:
-            self.register(self.get_repository)
+            tools.append(self.get_repository)
         if get_pull_request:
-            self.register(self.get_pull_request)
+            tools.append(self.get_pull_request)
         if get_pull_request_changes:
-            self.register(self.get_pull_request_changes)
+            tools.append(self.get_pull_request_changes)
         if create_issue:
-            self.register(self.create_issue)
+            tools.append(self.create_issue)
         if create_repository:
-            self.register(self.create_repository)
+            tools.append(self.create_repository)
         if delete_repository:
-            self.register(self.delete_repository)
+            tools.append(self.delete_repository)
         if list_branches:
-            self.register(self.list_branches)
+            tools.append(self.list_branches)
         if get_repository_languages:
-            self.register(self.get_repository_languages)
+            tools.append(self.get_repository_languages)
         if get_pull_request_count:
-            self.register(self.get_pull_request_count)
+            tools.append(self.get_pull_request_count)
         if get_repository_stars:
-            self.register(self.get_repository_stars)
+            tools.append(self.get_repository_stars)
         if get_pull_requests:
-            self.register(self.get_pull_requests)
+            tools.append(self.get_pull_requests)
         if get_pull_request_comments:
-            self.register(self.get_pull_request_comments)
+            tools.append(self.get_pull_request_comments)
         if create_pull_request_comment:
-            self.register(self.create_pull_request_comment)
+            tools.append(self.create_pull_request_comment)
         if edit_pull_request_comment:
-            self.register(self.edit_pull_request_comment)
+            tools.append(self.edit_pull_request_comment)
         if get_pull_request_with_details:
-            self.register(self.get_pull_request_with_details)
+            tools.append(self.get_pull_request_with_details)
         if get_repository_with_stats:
-            self.register(self.get_repository_with_stats)
-
+            tools.append(self.get_repository_with_stats)
         if list_issues:
-            self.register(self.list_issues)
+            tools.append(self.list_issues)
         if get_issue:
-            self.register(self.get_issue)
+            tools.append(self.get_issue)
         if comment_on_issue:
-            self.register(self.comment_on_issue)
+            tools.append(self.comment_on_issue)
         if close_issue:
-            self.register(self.close_issue)
+            tools.append(self.close_issue)
         if reopen_issue:
-            self.register(self.reopen_issue)
+            tools.append(self.reopen_issue)
         if assign_issue:
-            self.register(self.assign_issue)
+            tools.append(self.assign_issue)
         if label_issue:
-            self.register(self.label_issue)
+            tools.append(self.label_issue)
         if list_issue_comments:
-            self.register(self.list_issue_comments)
+            tools.append(self.list_issue_comments)
         if edit_issue:
-            self.register(self.edit_issue)
-
+            tools.append(self.edit_issue)
         if create_pull_request:
-            self.register(self.create_pull_request)
+            tools.append(self.create_pull_request)
         if create_file:
-            self.register(self.create_file)
+            tools.append(self.create_file)
         if get_file_content:
-            self.register(self.get_file_content)
+            tools.append(self.get_file_content)
         if update_file:
-            self.register(self.update_file)
+            tools.append(self.update_file)
         if delete_file:
-            self.register(self.delete_file)
+            tools.append(self.delete_file)
         if get_directory_content:
-            self.register(self.get_directory_content)
+            tools.append(self.get_directory_content)
         if get_branch_content:
-            self.register(self.get_branch_content)
+            tools.append(self.get_branch_content)
         if create_branch:
-            self.register(self.create_branch)
+            tools.append(self.create_branch)
         if set_default_branch:
-            self.register(self.set_default_branch)
+            tools.append(self.set_default_branch)
         if search_code:
-            self.register(self.search_code)
+            tools.append(self.search_code)
         if search_issues_and_prs:
-            self.register(self.search_issues_and_prs)
+            tools.append(self.search_issues_and_prs)
         if create_review_request:
-            self.register(self.create_review_request)
+            tools.append(self.create_review_request)
+
+        super().__init__(name="github", tools=tools, **kwargs)
 
     def authenticate(self):
         """Authenticate with GitHub using the provided access token."""
@@ -424,7 +428,7 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting pull request changes: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
+    def create_issue(self, repo_name: str, title: str, body: Optional[str] = NotSet) -> str:
         """Create an issue in a repository.
 
         Args:
@@ -665,8 +669,8 @@ class GithubTools(Toolkit):
         self,
         repo_name: str,
         issue_number: int,
-        title: Optional[str] = None,
-        body: Optional[str] = None,
+        title: Optional[str] = NotSet,
+        body: Optional[str] = NotSet,
     ) -> str:
         """Edit the title or body of an issue.
 
@@ -1292,7 +1296,7 @@ class GithubTools(Toolkit):
         path: str,
         content: str,
         message: str,
-        branch: Optional[str] = None,
+        branch: Optional[str] = NotSet,
     ) -> str:
         """Create a new file in a repository.
 
@@ -1323,13 +1327,15 @@ class GithubTools(Toolkit):
                 "url": result["content"].html_url,
                 "commit": {
                     "sha": result["commit"].sha,
-                    "message": result["commit"].commit.message,
+                    "message": result["commit"].commit.message
+                    if result["commit"].commit
+                    else result["commit"]._rawData["message"],
                     "url": result["commit"].html_url,
                 },
             }
 
             return json.dumps(file_info, indent=2)
-        except GithubException as e:
+        except (GithubException, AssertionError) as e:
             logger.error(f"Error creating file: {e}")
             return json.dumps({"error": str(e)})
 
@@ -1666,7 +1672,8 @@ class GithubTools(Toolkit):
 
             # Process results
             results = []
-            for code in code_results[:50]:  # Limit to 50 results to prevent timeouts
+            # Limit to 50 results to prevent timeouts
+            for code in code_results[:50]:
                 code_info = {
                     "repository": code.repository.full_name,
                     "path": code.path,
